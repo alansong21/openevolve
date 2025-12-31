@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from openevolve.config import Config
 from openevolve.database import Program, ProgramDatabase
 from openevolve.utils.metrics_utils import safe_numeric_average
+from openevolve.context_agent import fetch_context_from_agent
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +182,17 @@ def _run_iteration_worker(
             program_artifacts=parent_artifacts,
             feature_dimensions=db_snapshot.get("feature_dimensions", []),
         )
+
+        task_summary = "Evolve the openevolve L2C prefetcher (initial_program.cc) to improve IPC"
+        agent_context = fetch_context_from_agent(
+            task_description=task_summary, artifacts=parent_artifacts, token_budget=1200
+        )
+        if agent_context:
+            prompt["user"] = (
+                f"{prompt['user']}\n\n"
+                f"--- ChampSim context (agent) ---\n{agent_context}"
+            )
+            logger.info("Context agent supplied %d chars of guidance", len(agent_context))
 
         iteration_start = time.time()
 

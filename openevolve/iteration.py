@@ -16,6 +16,7 @@ from openevolve.utils.code_utils import (
     format_diff_summary,
     parse_full_rewrite,
 )
+from openevolve.context_agent import fetch_context_from_agent
 
 
 @dataclass
@@ -72,6 +73,18 @@ async def run_iteration_with_shared_db(
             program_artifacts=parent_artifacts if parent_artifacts else None,
             feature_dimensions=database.config.feature_dimensions,
         )
+
+        # Optionally enrich the prompt with agent-provided ChampSim context
+        task_summary = "Evolve the openevolve L2C prefetcher (initial_program.cc) to improve IPC"
+        agent_context = fetch_context_from_agent(
+            task_description=task_summary, artifacts=parent_artifacts, token_budget=1200
+        )
+        if agent_context:
+            prompt["user"] = (
+                f"{prompt['user']}\n\n"
+                f"--- ChampSim context (agent) ---\n{agent_context}"
+            )
+            logger.info("Context agent supplied %d chars of guidance", len(agent_context))
 
         result = Result(parent=parent)
         iteration_start = time.time()
