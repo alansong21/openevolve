@@ -77,7 +77,7 @@ async def run_iteration_with_shared_db(
         # Optionally enrich the prompt with agent-provided ChampSim context
         task_summary = "Evolve the openevolve L2C prefetcher (initial_program.cc) to improve IPC"
         agent_context = fetch_context_from_agent(
-            task_description=task_summary, artifacts=parent_artifacts, token_budget=1200
+            task_description=task_summary, artifacts=parent_artifacts, token_budget=5000
         )
         if agent_context:
             prompt["user"] = (

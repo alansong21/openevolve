@@ -185,7 +185,7 @@ def _run_iteration_worker(
 
         task_summary = "Evolve the openevolve L2C prefetcher (initial_program.cc) to improve IPC"
         agent_context = fetch_context_from_agent(
-            task_description=task_summary, artifacts=parent_artifacts, token_budget=1200
+            task_description=task_summary, artifacts=parent_artifacts, token_budget=5000
         )
         if agent_context:
             prompt["user"] = (

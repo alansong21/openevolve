@@ -8,8 +8,13 @@ does not depend on PYTHONPATH tweaks.
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import os
+import threading
+import time
 
 from langchain.agents import create_agent
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
@@ -27,6 +32,90 @@ ROOTS = {
     "components": (PROJECT_ROOT / "openevolve-components").resolve(),
     "prefetchers": (PROJECT_ROOT / "prefetchers").resolve(),
 }
+
+
+LOG_MAX_CHARS = int(os.environ.get("INTERNAL_AGENT_LOG_MAX_CHARS", 8000))
+
+
+def _resolve_agent_log_path() -> Path:
+    run_id = os.environ.get("OPENEVOLVE_RUN_ID", "").strip()
+    if run_id:
+        return (
+            PROJECT_ROOT
+            / "openevolve-components"
+            / "openevolve_output"
+            / "runs"
+            / run_id
+            / "openevolve"
+            / "internal_agent.jsonl"
+        )
+    return (
+        PROJECT_ROOT
+        / "openevolve-components"
+        / "openevolve_output"
+        / "logs"
+        / "internal_agent.jsonl"
+    )
+
+
+def _truncate(payload: str) -> str:
+    if len(payload) <= LOG_MAX_CHARS:
+        return payload
+    return payload[:LOG_MAX_CHARS] + "...(truncated)"
+
+
+class AgentLogHandler(BaseCallbackHandler):
+    def __init__(self, log_path: Path) -> None:
+        self.log_path = log_path
+        self.lock = threading.Lock()
+
+    def _write(self, event: str, payload: dict) -> None:
+        record = {
+            "timestamp": time.time(),
+            "event": event,
+            "payload": payload,
+        }
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(record, ensure_ascii=True, default=str)
+        with self.lock:
+            with self.log_path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+
+    def on_llm_start(self, serialized, prompts, **kwargs) -> None:
+        safe_prompts = [_truncate(p) for p in prompts]
+        self._write(
+            "llm_start",
+            {"serialized": serialized, "prompts": safe_prompts, "kwargs": kwargs},
+        )
+
+    def on_llm_end(self, response, **kwargs) -> None:
+        content = ""
+        try:
+            content = response.generations[0][0].text or ""
+        except Exception:
+            content = str(response)
+        self._write(
+            "llm_end",
+            {"response": _truncate(content), "kwargs": kwargs},
+        )
+
+    def on_tool_start(self, serialized, input_str, **kwargs) -> None:
+        self._write(
+            "tool_start",
+            {"serialized": serialized, "input": _truncate(str(input_str)), "kwargs": kwargs},
+        )
+
+    def on_tool_end(self, output, **kwargs) -> None:
+        self._write(
+            "tool_end",
+            {"output": _truncate(str(output)), "kwargs": kwargs},
+        )
+
+    def on_agent_action(self, action, **kwargs) -> None:
+        self._write("agent_action", {"action": str(action), "kwargs": kwargs})
+
+    def on_agent_finish(self, finish, **kwargs) -> None:
+        self._write("agent_finish", {"finish": str(finish), "kwargs": kwargs})
 
 
 def _resolve_root(alias: str | None = None) -> Path:
@@ -114,9 +203,19 @@ tools = [list_files, read_file]
 
 SYSTEM_PROMPT = (
     "You are a helpful coding assistant. "
+    "Start every response with a short 'Known pitfalls' list. "
+    "Include this pitfall verbatim: "
+    "'Do NOT use std::unordered_map or std::unordered_set with champsim::address, "
+    "champsim::block_number, or champsim::address_slice<> keys unless you define a custom "
+    "hash; prefer converting to uint64_t keys.' "
     "Use list_files and read_file to gather only the most relevant ChampSim/OpenEvolve context. "
     "You may explore all known roots without specifying a root_alias unless needed."
 )
 
-llm = ChatOpenAI(model="gpt-4o-mini")
-agent = create_agent(model=llm, tools=tools, system_prompt=SYSTEM_PROMPT)
+agent_log_handler = AgentLogHandler(_resolve_agent_log_path())
+llm = ChatOpenAI(model="gpt-4o-mini", callbacks=[agent_log_handler])
+agent = create_agent(
+    model=llm,
+    tools=tools,
+    system_prompt=SYSTEM_PROMPT,
+)

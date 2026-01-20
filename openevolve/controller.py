@@ -186,7 +186,13 @@ class OpenEvolve:
 
     def _setup_logging(self) -> None:
         """Set up logging"""
-        log_dir = self.config.log_dir or os.path.join(self.output_dir, "logs")
+        run_id = os.environ.get("OPENEVOLVE_RUN_ID", "").strip()
+        if self.config.log_dir:
+            log_dir = self.config.log_dir
+        elif run_id:
+            log_dir = os.path.join(self.output_dir, "runs", run_id, "openevolve")
+        else:
+            log_dir = os.path.join(self.output_dir, "logs")
         os.makedirs(log_dir, exist_ok=True)
 
         # Set up root logger
