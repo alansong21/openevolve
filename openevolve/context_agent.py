@@ -57,17 +57,22 @@ def fetch_context_from_agent(
     logger.debug("Invoking context agent (budget=%d)", token_budget)
     artifact_text = _coerce_artifacts(artifacts)
     query = (
-        "Summarize only the ChampSim/OpenEvolve APIs and source snippets that are relevant "
-        "to the current task. Prefer prefetcher APIs, address slices, access_type enums, "
-        "and L2-related code. Keep the output concise.\n"
-        f"Task: {task_description}\n"
+        "Read the artifacts below, and find the information needed to resolve the errors in the artifacts by reading the relevant files from the codebase."
+        "Specifically, read the following files: ** 1) address.h 2) champsim.h 3) modules.h 4) cache.h ** , and return all the contents of each file in your response."
         f"Recent artifacts:\n{artifact_text}"
     )
 
     try:
         result = _agent.invoke({"messages": [{"role": "user", "content": query}]})
         messages = result.get("messages", []) if isinstance(result, dict) else []
-        content = messages[-1].content if messages else ""
+        if not messages:
+            content = ""
+        else:
+            last = messages[-1]
+            if isinstance(last, dict):
+                content = last.get("content", "")
+            else:
+                content = getattr(last, "content", "")
     except Exception as exc:  # noqa: BLE001
         logger.debug("Context agent invocation failed: %s", exc)
         return ""
@@ -76,6 +81,6 @@ def fetch_context_from_agent(
         logger.debug("Context agent returned empty content")
         return ""
 
-    trimmed = content[:token_budget]
-    logger.debug("Context agent returned %d chars (trimmed to %d)", len(content), len(trimmed))
-    return trimmed
+    # trimmed = content[:token_budget]
+    # logger.debug("Context agent returned %d chars (trimmed to %d)", len(content), len(trimmed))
+    return content
