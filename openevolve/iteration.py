@@ -32,6 +32,10 @@ class Result:
     artifacts: dict = None
 
 
+def _approx_token_count(text: str) -> int:
+    return max(1, (len(text) + 3) // 4) if text else 0
+
+
 async def run_iteration_with_shared_db(
     iteration: int,
     config: Config,
@@ -80,11 +84,20 @@ async def run_iteration_with_shared_db(
             task_description=task_summary, artifacts=parent_artifacts, token_budget=1200
         )
         if agent_context:
+            original_user_len = len(prompt["user"])
             prompt["user"] = (
                 f"{prompt['user']}\n\n"
-                f"--- ChampSim context (agent) ---\n{agent_context}"
+                f"--- Codebase context (agent-appended at end of prompt) ---\n{agent_context}"
             )
-            logger.info("Context agent supplied %d chars of guidance", len(agent_context))
+            logger.info(
+                "Context appended to user prompt: context=%d chars (~%d tokens), user_before=%d chars (~%d tokens), user_after=%d chars (~%d tokens)",
+                len(agent_context),
+                _approx_token_count(agent_context),
+                original_user_len,
+                _approx_token_count(prompt["user"][:original_user_len]),
+                len(prompt["user"]),
+                _approx_token_count(prompt["user"]),
+            )
 
         result = Result(parent=parent)
         iteration_start = time.time()

@@ -1,5 +1,5 @@
 """
-Programmatic, in-tree context fetcher for hardcoded ChampSim files.
+Programmatic, in-tree context fetcher for hardcoded workflow-specific files.
 
 This keeps a LangChain-based agent available, but defaults to the deterministic
 programmatic fetcher to avoid external dependencies.
@@ -8,6 +8,7 @@ programmatic fetcher to avoid external dependencies.
 from __future__ import annotations
 
 import os
+import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -23,18 +24,58 @@ except Exception:  # noqa: BLE001
 
 # Resolve project root (two levels up from this file: openevolve/openevolve/)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+logger = logging.getLogger(__name__)
 
-HARDCODED_FILES = [
-    "ChampSim/inc/address.h",
-    "ChampSim/inc/champsim.h",
-    "ChampSim/inc/modules.h",
-    "ChampSim/inc/cache.h",
-]
+HARDCODED_FILE_BUNDLES = {
+    "champsim": [
+        "ChampSim/inc/address.h",
+        "ChampSim/inc/champsim.h",
+        "ChampSim/inc/modules.h",
+        "ChampSim/inc/cache.h",
+    ],
+    "cbp_ng": [
+        "cbp-ng/harcom.hpp",
+        "cbp-ng/cbp.hpp",
+        "cbp-ng/README.md",
+        "cbp-ng/docs/tutorial.md",
+        "cbp-ng/predictors/tutorial/tutorial_00.hpp",
+        "cbp-ng/predictors/tutorial/tutorial_01.hpp",
+        "cbp-ng/predictors/tutorial/tutorial_02.hpp",
+        "cbp-ng/predictors/tutorial/tutorial_03.hpp",
+        "cbp-ng/predictors/tutorial/tutorial_04.hpp",
+        "cbp-ng/predictors/common.hpp",
+        "cbp-ng/predictors/bimodal.hpp",
+        "cbp-ng/predictors/gshare.hpp",
+        "cbp-ng/predictors/perceptron.hpp",
+        "cbp-ng/predictors/tage.hpp",
+    ],
+}
 
 
-def _read_hardcoded_files() -> str:
+def _select_bundle(query: str) -> str:
+    query_lower = query.lower()
+    cbp_ng_markers = (
+        "cbp-ng",
+        "workflows/cbp_ng",
+        "openevolve_predictor.hpp",
+        "initial_program.hpp",
+        "harcom",
+        "predictor::update_condbr",
+    )
+    if any(marker in query_lower for marker in cbp_ng_markers):
+        return "cbp_ng"
+    return "champsim"
+
+
+def _approx_token_count(text: str) -> int:
+    # Simple approximation for logging/observability only.
+    return max(1, (len(text) + 3) // 4) if text else 0
+
+
+def _read_hardcoded_files(bundle_name: str) -> str:
+    file_list = HARDCODED_FILE_BUNDLES.get(bundle_name, HARDCODED_FILE_BUNDLES["champsim"])
     sections: List[str] = []
-    for rel_path in HARDCODED_FILES:
+    for rel_path in file_list:
         path = (PROJECT_ROOT / rel_path).resolve()
         if not path.is_file():
             sections.append(f"[{rel_path}]\n<missing>")
@@ -45,14 +86,37 @@ def _read_hardcoded_files() -> str:
             sections.append(f"[{rel_path}]\n<read error: {exc}>")
             continue
         sections.append(f"[{rel_path}]\n{content}")
-    return "\n\n".join(sections)
+    content = "\n\n".join(sections)
+    logger.info(
+        "Programmatic context bundle '%s' loaded with %d file(s), %d chars, ~%d tokens",
+        bundle_name,
+        len(file_list),
+        len(content),
+        _approx_token_count(content),
+    )
+    return content
 
 
 class _ProgrammaticAgent:
     """Minimal stand-in that matches the LangChain agent invoke() API."""
 
-    def invoke(self, _: Dict[str, Any]) -> Dict[str, Any]:
-        content = _read_hardcoded_files()
+    def invoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        messages = payload.get("messages", [])
+        query = ""
+        if messages:
+            last = messages[-1]
+            if isinstance(last, dict):
+                query = str(last.get("content", ""))
+            else:
+                query = str(getattr(last, "content", ""))
+        bundle_name = _select_bundle(query)
+        logger.info(
+            "Programmatic context agent selected bundle '%s' for query (%d chars, ~%d tokens)",
+            bundle_name,
+            len(query),
+            _approx_token_count(query),
+        )
+        content = _read_hardcoded_files(bundle_name)
         return {"messages": [{"content": content}]}
 
 def _build_langchain_agent() -> Any | None:
@@ -152,7 +216,7 @@ def _build_langchain_agent() -> Any | None:
 
     system_prompt = (
         "You are a helpful coding assistant. "
-        "Use list_files and read_file to gather only the most relevant ChampSim/OpenEvolve context. "
+        "Use list_files and read_file to gather only the most relevant ChampSim/CBP-NG/OpenEvolve context. "
         "You may explore all known roots without specifying a root_alias unless needed."
     )
 

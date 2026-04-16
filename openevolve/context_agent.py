@@ -21,8 +21,8 @@ except Exception as exc:  # noqa: BLE001
     _import_error = exc
 
 
-def _coerce_artifacts(artifacts: Dict[str, Any] | None, limit: int = 4000) -> str:
-    """Render artifacts to a short plaintext blob for the context query."""
+def _coerce_artifacts(artifacts: Dict[str, Any] | None, limit: int | None = None) -> str:
+    """Render artifacts to a plaintext blob for the context query."""
     if not artifacts:
         return ""
     parts = []
@@ -36,7 +36,14 @@ def _coerce_artifacts(artifacts: Dict[str, Any] | None, limit: int = 4000) -> st
             payload = str(payload)
         parts.append(f"[{name}]\n{payload}")
     blob = "\n\n".join(parts)
+    if limit is None:
+        return blob
     return blob[:limit]
+
+
+def _approx_token_count(text: str) -> int:
+    # Simple approximation for logging/observability only.
+    return max(1, (len(text) + 3) // 4) if text else 0
 
 
 def fetch_context_from_agent(
@@ -54,12 +61,52 @@ def fetch_context_from_agent(
             logger.debug("Context agent unavailable: %s", _import_error)
         return ""
 
-    logger.debug("Invoking context agent (budget=%d)", token_budget)
+    logger.info(
+        "Invoking context agent (token_budget=%d is informational only; no truncation is currently applied to returned context)",
+        token_budget,
+    )
     artifact_text = _coerce_artifacts(artifacts)
+    combined_text = f"{task_description}\n\n{artifact_text}".lower()
+    is_cbp_ng = any(
+        marker in combined_text
+        for marker in (
+            "cbp-ng",
+            "workflows/cbp_ng",
+            "openevolve_predictor.hpp",
+            "initial_program.hpp",
+            "harcom",
+        )
+    )
+    if is_cbp_ng:
+        bundle_name = "cbp_ng"
+        file_instructions = (
+            "Specifically, read and return the full contents of the following CBP-NG/HARCOM files: "
+            "** 1) cbp-ng/harcom.hpp 2) cbp-ng/cbp.hpp 3) cbp-ng/README.md 4) cbp-ng/docs/tutorial.md "
+            "5) cbp-ng/predictors/tutorial/tutorial_00.hpp 6) cbp-ng/predictors/tutorial/tutorial_01.hpp "
+            "7) cbp-ng/predictors/tutorial/tutorial_02.hpp 8) cbp-ng/predictors/tutorial/tutorial_03.hpp "
+            "9) cbp-ng/predictors/tutorial/tutorial_04.hpp 10) cbp-ng/predictors/common.hpp "
+            "11) cbp-ng/predictors/bimodal.hpp 12) cbp-ng/predictors/gshare.hpp "
+            "13) cbp-ng/predictors/perceptron.hpp 14) cbp-ng/predictors/tage.hpp **."
+        )
+    else:
+        bundle_name = "champsim"
+        file_instructions = (
+            "Specifically, read and return the full contents of the following ChampSim files: "
+            "** 1) ChampSim/inc/address.h 2) ChampSim/inc/champsim.h 3) ChampSim/inc/modules.h 4) ChampSim/inc/cache.h **."
+        )
     query = (
         "Read the artifacts below, and find the information needed to resolve the errors in the artifacts by reading the relevant files from the codebase."
-        "Specifically, read the following files: ** 1) address.h 2) champsim.h 3) modules.h 4) cache.h ** , and return all the contents of each file in your response."
+        f"{file_instructions}"
+        f"\nTask description:\n{task_description}\n"
         f"Recent artifacts:\n{artifact_text}"
+    )
+    logger.info(
+        "Context agent query prepared for bundle '%s': query=%d chars (~%d tokens), artifacts=%d chars (~%d tokens)",
+        bundle_name,
+        len(query),
+        _approx_token_count(query),
+        len(artifact_text),
+        _approx_token_count(artifact_text),
     )
 
     try:
@@ -81,6 +128,10 @@ def fetch_context_from_agent(
         logger.debug("Context agent returned empty content")
         return ""
 
-    # trimmed = content[:token_budget]
-    # logger.debug("Context agent returned %d chars (trimmed to %d)", len(content), len(trimmed))
+    logger.info(
+        "Context agent returned non-empty bundle '%s': %d chars (~%d tokens); no trimming applied",
+        bundle_name,
+        len(content),
+        _approx_token_count(content),
+    )
     return content
