@@ -26,6 +26,8 @@ except Exception:  # noqa: BLE001
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 logger = logging.getLogger(__name__)
 
+DEFAULT_BUNDLE = "champsim"
+
 HARDCODED_FILE_BUNDLES = {
     "champsim": [
         "ChampSim/inc/address.h",
@@ -52,28 +54,13 @@ HARDCODED_FILE_BUNDLES = {
 }
 
 
-def _select_bundle(query: str) -> str:
-    query_lower = query.lower()
-    cbp_ng_markers = (
-        "cbp-ng",
-        "workflows/cbp_ng",
-        "openevolve_predictor.hpp",
-        "initial_program.hpp",
-        "harcom",
-        "predictor::update_condbr",
-    )
-    if any(marker in query_lower for marker in cbp_ng_markers):
-        return "cbp_ng"
-    return "champsim"
-
-
 def _approx_token_count(text: str) -> int:
     # Simple approximation for logging/observability only.
     return max(1, (len(text) + 3) // 4) if text else 0
 
 
 def _read_hardcoded_files(bundle_name: str) -> str:
-    file_list = HARDCODED_FILE_BUNDLES.get(bundle_name, HARDCODED_FILE_BUNDLES["champsim"])
+    file_list = HARDCODED_FILE_BUNDLES.get(bundle_name, HARDCODED_FILE_BUNDLES[DEFAULT_BUNDLE])
     sections: List[str] = []
     for rel_path in file_list:
         path = (PROJECT_ROOT / rel_path).resolve()
@@ -109,7 +96,8 @@ class _ProgrammaticAgent:
                 query = str(last.get("content", ""))
             else:
                 query = str(getattr(last, "content", ""))
-        bundle_name = _select_bundle(query)
+        requested_bundle = str(payload.get("bundle", "") or "").strip()
+        bundle_name = requested_bundle if requested_bundle in HARDCODED_FILE_BUNDLES else DEFAULT_BUNDLE
         logger.info(
             "Programmatic context agent selected bundle '%s' for query (%d chars, ~%d tokens)",
             bundle_name,

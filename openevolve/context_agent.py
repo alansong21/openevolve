@@ -9,6 +9,7 @@ loop proceed unchanged.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
@@ -46,10 +47,26 @@ def _approx_token_count(text: str) -> int:
     return max(1, (len(text) + 3) // 4) if text else 0
 
 
+def _resolve_bundle_name(explicit_bundle: str | None = None) -> str:
+    if explicit_bundle:
+        return explicit_bundle
+
+    env_bundle = os.getenv("OPENEvolve_CONTEXT_BUNDLE", "").strip()
+    if env_bundle:
+        return env_bundle
+
+    workflow = os.getenv("OPENEVOLVE_WORKFLOW", "").strip().lower()
+    if workflow == "cbp_ng":
+        return "cbp_ng"
+
+    return "champsim"
+
+
 def fetch_context_from_agent(
     task_description: str,
     artifacts: Dict[str, Any] | None = None,
     token_budget: int = 1200,
+    bundle_name: str | None = None,
 ) -> str:
     """
     Ask the external LangChain agent for a compact codebase context bundle.
@@ -66,19 +83,8 @@ def fetch_context_from_agent(
         token_budget,
     )
     artifact_text = _coerce_artifacts(artifacts)
-    combined_text = f"{task_description}\n\n{artifact_text}".lower()
-    is_cbp_ng = any(
-        marker in combined_text
-        for marker in (
-            "cbp-ng",
-            "workflows/cbp_ng",
-            "openevolve_predictor.hpp",
-            "initial_program.hpp",
-            "harcom",
-        )
-    )
-    if is_cbp_ng:
-        bundle_name = "cbp_ng"
+    bundle_name = _resolve_bundle_name(bundle_name)
+    if bundle_name == "cbp_ng":
         file_instructions = (
             "Specifically, read and return the full contents of the following CBP-NG/HARCOM files: "
             "** 1) cbp-ng/harcom.hpp 2) cbp-ng/cbp.hpp 3) cbp-ng/README.md 4) cbp-ng/docs/tutorial.md "
@@ -110,7 +116,7 @@ def fetch_context_from_agent(
     )
 
     try:
-        result = _agent.invoke({"messages": [{"role": "user", "content": query}]})
+        result = _agent.invoke({"bundle": bundle_name, "messages": [{"role": "user", "content": query}]})
         messages = result.get("messages", []) if isinstance(result, dict) else []
         if not messages:
             content = ""
